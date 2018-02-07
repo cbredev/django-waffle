@@ -10,12 +10,12 @@ except ImportError:
 
 from django.conf import settings
 from django.contrib.auth.models import Group
-from django.db import models
+from django.db import models, router
 from django.db.models.signals import post_save, post_delete, m2m_changed
 from django.utils.encoding import python_2_unicode_compatible
 
 from waffle import managers
-from waffle.utils import get_setting, keyfmt, get_cache
+from waffle.utils import get_setting, keyfmt, get_cache, is_authenticated
 
 
 cache = get_cache()
@@ -47,13 +47,20 @@ class BaseModel(models.Model):
             return cached
 
         try:
-            obj = cls.objects.get(name=name)
+            obj = cls.get_from_db(name)
         except cls.DoesNotExist:
             cache.add(cache_key, CACHE_EMPTY)
             return cls()
 
         cache.add(cache_key, obj)
         return obj
+
+    @classmethod
+    def get_from_db(cls, name):
+        objects = cls.objects
+        if get_setting('READ_FROM_WRITE_DB'):
+            objects = objects.using(router.db_for_write(cls))
+        return objects.get(name=name)
 
     @classmethod
     def get_all(cls):
@@ -64,13 +71,20 @@ class BaseModel(models.Model):
         if cached:
             return cached
 
-        objs = list(cls.objects.all())
+        objs = cls.get_all_from_db()
         if not objs:
             cache.add(cache_key, CACHE_EMPTY)
             return []
 
         cache.add(cache_key, objs)
         return objs
+
+    @classmethod
+    def get_all_from_db(cls):
+        objects = cls.objects
+        if get_setting('READ_FROM_WRITE_DB'):
+            objects = objects.using(router.db_for_write(cls))
+        return list(objects.all())
 
     def flush(self):
         keys = [
@@ -104,15 +118,17 @@ class Flag(BaseModel):
     Flags are active (or not) on a per-request basis.
 
     """
+
     name = models.CharField(max_length=100, unique=True,
                             help_text='The human/computer readable name.')
     everyone = models.NullBooleanField(blank=True, help_text=(
         'Flip this flag on (Yes) or off (No) for everyone, overriding all '
         'other settings. Leave as Unknown to use normally.'))
-    percent = models.DecimalField(max_digits=3, decimal_places=1, null=True,
-                                  blank=True, help_text=(
-        'A number between 0.0 and 99.9 to indicate a percentage of users for '
-        'whom this flag will be active.'))
+    percent = models.DecimalField(
+        max_digits=3, decimal_places=1, null=True, blank=True,
+        help_text=('A number between 0.0 and 99.9 to indicate a percentage of '
+                   'users for whom this flag will be active.')
+    )
     testing = models.BooleanField(default=False, help_text=(
         'Allow this flag to be set for a session for user testing.'))
     superusers = models.BooleanField(default=True, help_text=(
@@ -126,14 +142,18 @@ class Flag(BaseModel):
         'separated list)'))
     groups = models.ManyToManyField(Group, blank=True, help_text=(
         'Activate this flag for these user groups.'))
-    users = models.ManyToManyField(settings.AUTH_USER_MODEL, blank=True,
-        help_text=('Activate this flag for these users.'))
+    users = models.ManyToManyField(
+        settings.AUTH_USER_MODEL, blank=True,
+        help_text=('Activate this flag for these users.')
+    )
     rollout = models.BooleanField(default=False, help_text=(
         'Activate roll-out mode?'))
     note = models.TextField(blank=True, help_text=(
         'Note where this Flag is used.'))
-    created = models.DateTimeField(default=datetime.now, db_index=True,
-        help_text=('Date when this Flag was created.'))
+    created = models.DateTimeField(
+        default=datetime.now, db_index=True,
+        help_text=('Date when this Flag was created.')
+    )
     modified = models.DateTimeField(default=datetime.now, help_text=(
         'Date when this Flag was last modified.'))
 
@@ -184,7 +204,8 @@ class Flag(BaseModel):
         return group_ids
 
     def is_active_for_user(self, user):
-        authed = getattr(user, 'is_authenticated', lambda: False)()
+        authed = is_authenticated(user)
+
         if self.authenticated and authed:
             return True
 
@@ -274,14 +295,17 @@ class Switch(BaseModel):
     Switches are active, or inactive, globally.
 
     """
+
     name = models.CharField(max_length=100, unique=True,
                             help_text='The human/computer readable name.')
     active = models.BooleanField(default=False, help_text=(
         'Is this switch active?'))
     note = models.TextField(blank=True, help_text=(
         'Note where this Switch is used.'))
-    created = models.DateTimeField(default=datetime.now, db_index=True,
-        help_text=('Date when this Switch was created.'))
+    created = models.DateTimeField(
+        default=datetime.now, db_index=True,
+        help_text=('Date when this Switch was created.')
+    )
     modified = models.DateTimeField(default=datetime.now, help_text=(
         'Date when this Switch was last modified.'))
 
@@ -300,9 +324,13 @@ class Switch(BaseModel):
 
 
 class Sample(BaseModel):
-    """A sample is true some percentage of the time, but is not connected
+    """A sample of users.
+
+    A sample is true some percentage of the time, but is not connected
     to users or requests.
+
     """
+
     name = models.CharField(max_length=100, unique=True,
                             help_text='The human/computer readable name.')
     percent = models.DecimalField(max_digits=4, decimal_places=1, help_text=(
@@ -310,8 +338,10 @@ class Sample(BaseModel):
         'this sample will be active.'))
     note = models.TextField(blank=True, help_text=(
         'Note where this Sample is used.'))
-    created = models.DateTimeField(default=datetime.now, db_index=True,
-        help_text=('Date when this Sample was created.'))
+    created = models.DateTimeField(
+        default=datetime.now, db_index=True,
+        help_text=('Date when this Sample was created.')
+    )
     modified = models.DateTimeField(default=datetime.now, help_text=(
         'Date when this Sample was last modified.'))
 

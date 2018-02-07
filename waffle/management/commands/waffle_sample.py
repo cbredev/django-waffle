@@ -7,17 +7,25 @@ from waffle.models import Sample
 
 class Command(BaseCommand):
     def add_arguments(self, parser):
-        parser.add_argument('positionals', nargs='*')
+        parser.add_argument(
+            'name',
+            nargs='?',
+            help='The name of the sample.')
+        parser.add_argument(
+            'percent',
+            nargs='?',
+            type=int,
+            help='The percentage of the time this sample will be active.')
         parser.add_argument(
             '-l', '--list',
             action='store_true', dest='list_samples', default=False,
-            help='List existing samples.'),
+            help='List existing samples.')
         parser.add_argument(
             '--create',
             action='store_true',
             dest='create',
             default=False,
-            help="If the sample doesn't exist, create it."),
+            help='If the sample does not exist, create it.')
 
     help = 'Change percentage of a sample.'
 
@@ -25,15 +33,17 @@ class Command(BaseCommand):
         if options['list_samples']:
             self.stdout.write('Samples:')
             for sample in Sample.objects.iterator():
-                self.stdout.write('%s: %s%%' % (sample.name, sample.percent))
+                self.stdout.write('%s: %.1f%%' % (sample.name, sample.percent))
             self.stdout.write('')
             return
 
-        sample_name = options['positionals'][0]
-        percent = options['positionals'][1]
+        sample_name = options['name']
+        percent = options['percent']
 
         if not (sample_name and percent):
-            raise CommandError('You need to specify a sample name and percentage.')
+            raise CommandError(
+                'You need to specify a sample name and percentage.'
+            )
 
         try:
             percent = float(percent)
